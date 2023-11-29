@@ -1,3 +1,6 @@
 langchain
 streamlit
 requests
+yaml
+sentence_transformers
+sklearn
