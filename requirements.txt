@@ -2,4 +2,4 @@ langchain
 streamlit
 requests
 sentence_transformers
-sklearn
+scikit-learn
