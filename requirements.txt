@@ -3,3 +3,4 @@ streamlit
 requests
 sentence_transformers
 scikit-learn
+pypdf
