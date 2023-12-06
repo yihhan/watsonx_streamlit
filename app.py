@@ -130,7 +130,7 @@ def build_prompt(question, topn_chunks_for_prompts):
   for c in topn_chunks_for_prompts:
       prompt += c + '\n\n'
 
-  prompt += "Instructions: Compose a comprehensive reply to the query using the search results given. "\
+  prompt += "Instructions: You are a cyber security expert. Compose a comprehensive reply to the query using the search results given. "\
           "First answer yes or no before explaining. "\
           "Cite each reference using [Page Number] notation (every result has this number at the beginning). "\
           "Citation should be done at the end of each sentence. Only include information found in the results and "\
@@ -139,7 +139,7 @@ def build_prompt(question, topn_chunks_for_prompts):
           "search results which has nothing to do with the question. Only answer what is asked. The "\
           "answer should be short and concise."
 
-  prompt += f"\n\n\nQuery: {question}\n\nAnswer: "
+  prompt += f"\n\n\nInput: {question}\n\nOutput: "
 
   return prompt
 # # Load environment vars
@@ -177,6 +177,25 @@ if uploaded_policy_file is not None:
     chunks = text_to_chunks(text_list)
     embeddings = get_text_embedding(chunks)
 
+# Define a custom constructor for !Ref and !GetAtt tags
+def ref_getatt_constructor(loader, node):
+    if isinstance(node, yaml.ScalarNode):
+        # Handle scalar values (non-sequence)
+        return loader.construct_scalar(node)
+    elif isinstance(node, yaml.SequenceNode):
+        # Handle sequences (lists)
+        return loader.construct_sequence(node)
+    else:
+        # Handle other cases
+        raise ValueError(f"Unexpected node type: {node.tag}")
+    
+# Add the custom constructor to the yaml loader
+yaml.add_constructor('!Ref', ref_getatt_constructor)
+
+yaml.add_constructor('!GetAtt', ref_getatt_constructor)
+
+yaml.add_constructor('!Join', ref_getatt_constructor)
+
 if uploaded_file is not None:
     st.success("File uploaded successfully!")
     st.write("File Details:")
@@ -184,12 +203,9 @@ if uploaded_file is not None:
     st.write(file_details)
 
     # If the uploaded file is a YAML file, read and display its content
-    if uploaded_file.type in ["application/x-yaml", "text/yaml", "text/plain"]:
+    if uploaded_file.type in ["application/x-yaml", "text/yaml", "text/plain", "application/octet-stream"]:
         st.subheader("Results Summary:")
-        yaml_content = yaml.safe_load(uploaded_file.read())
-        # st.write(yaml_content)
-
-    
+        yaml_content = yaml.load(uploaded_file.read(), Loader=yaml.FullLoader)
 
     output_policy = ""
     output_filename = uploaded_file.name
@@ -201,9 +217,10 @@ if uploaded_file is not None:
         df_results = pd.DataFrame(columns=["filename", "policy_file", "section", "compliance", "reasons"])
         list_rows = []
         for key in yaml_content["Resources"]:
+        # if 1:
 
-            st.write(key)
             output_section = yaml_content["Resources"][key]
+            # output_section = yaml_content["Resources"]
 
             if uploaded_policy_file is not None:
 
@@ -211,7 +228,9 @@ if uploaded_file is not None:
 
                 prompt = "Input: You are an AWS cloud expert. What does this cloudformation template do? Answer concisely."
                 prompt += "\n"
-                prompt += str(yaml_content["Resources"][key])
+                # prompt += str(yaml_content["Parameters"])
+                # prompt += str(yaml_content["Resources"][key])
+                prompt += str(yaml_content["Resources"])
                 prompt += "\n"
                 prompt += "Output:"
 
@@ -236,11 +255,13 @@ if uploaded_file is not None:
 
                 #Q&A functionalities
                 question = output + "Is this compliant?"
+                # question = output + "Does it meet the compliance requirements outlined in the search results?"
                 topn_chunks = get_search_results(question, embeddings, chunks)
+                question = "Is the cloud formation template below compliant?:" + str(yaml_content["Resources"])
                 prompt = build_prompt(question, topn_chunks)
-                prompt += "\n"
-                prompt += "Output:"
-
+                # prompt += "\n"
+                # prompt += "Output:"
+                st.write(prompt)
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": "Bearer " + ibm_api_key
@@ -257,9 +278,10 @@ if uploaded_file is not None:
                 response_json = response.json()
                 output = response_json.get("results")[0]["generated_text"]
                 # Write the output to the screen
-                
+                st.write(output)
+
                 if "yes" in output[:5].lower():
-                    output_compliance = "yes"
+                    output_compliance = "Yes"
                 if "no" in output[:5].lower():
                     output_compliance = "No"
 
@@ -269,9 +291,13 @@ if uploaded_file is not None:
                 # df_results = pd.concat([df_results, pd.DataFrame(new_row)], ignore_index=True)
 
             else:
-                prompt = "Input: You are a cyber security expect. Is the cloud formation template below CIS-compliant?  First answer yes or no before explaining." 
+                prompt = "Input: You are a cyber security expert. Is the cloud formation template below CIS-compliant?  First answer yes or no before explaining."\
+                " Make sure the answer is correct and don't output false content. "\
+                "answer should be short and concise."
                 prompt += "\n"
-                prompt += str(yaml_content["Resources"][key])
+                # prompt += str(yaml_content["Parameters"])
+                # prompt += str(yaml_content["Resources"][key])
+                prompt += str(yaml_content["Resources"])
                 prompt += "\n"
                 prompt += "Output:"
                 headers = {
@@ -294,7 +320,7 @@ if uploaded_file is not None:
                 output_reasons = output
                 st.write(output)
                 if "yes" in output[:5].lower():
-                    output_compliance = "yes"
+                    output_compliance = "Yes"
                 if "no" in output[:5].lower():
                     output_compliance = "No"
 
