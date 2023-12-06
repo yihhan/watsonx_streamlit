@@ -189,7 +189,7 @@ if uploaded_file is not None:
         yaml_content = yaml.safe_load(uploaded_file.read())
         # st.write(yaml_content)
 
-    df_results = pd.DataFrame(columns=["filename", "policy_file", "section", "compliance", "reasons"])
+    
 
     output_policy = ""
     output_filename = uploaded_file.name
@@ -198,9 +198,11 @@ if uploaded_file is not None:
     output_reasons = ""
 
     if yaml_content:
+        df_results = pd.DataFrame(columns=["filename", "policy_file", "section", "compliance", "reasons"])
+        list_rows = []
         for key in yaml_content["Resources"]:
 
-            #  st.write(yaml_content["Resources"][key])
+            st.write(key)
             output_section = yaml_content["Resources"][key]
 
             if uploaded_policy_file is not None:
@@ -263,7 +265,8 @@ if uploaded_file is not None:
 
                 output_reasons = output
                 new_row = {"filename":output_filename, "policy_file":output_policy, "section":output_section, "compliance":output_compliance, "reasons":output_reasons}
-                df_results = df_results.append(new_row, ignore_index=True)
+                list_rows.append(pd.DataFrame([new_row]))
+                # df_results = pd.concat([df_results, pd.DataFrame(new_row)], ignore_index=True)
 
             else:
                 prompt = "Input: You are a cyber security expect. Is the cloud formation template below CIS-compliant?  First answer yes or no before explaining." 
@@ -296,6 +299,8 @@ if uploaded_file is not None:
                     output_compliance = "No"
 
                 new_row = {"filename":output_filename, "policy_file":output_policy, "section":output_section, "compliance":output_compliance, "reasons":output_reasons}
-                df_results = df_results.append(new_row, ignore_index=True)
-
+                list_rows.append(pd.DataFrame([new_row]))
+                st.write(new_row)
+                # df_results = pd.concat([df_results, pd.DataFrame(new_row)], ignore_index=True)
+    df_results = pd.concat(list_rows, ignore_index=True)
     st.dataframe(df_results, use_container_width=True)
