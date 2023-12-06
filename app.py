@@ -1,32 +1,31 @@
-# Import environment loading library
-#from dotenv import load_dotenv
-# Import IBMGen Library 
-#from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
-#from langchain.llms.base import LLM
-# Import lang Chain Interface object
-#from langChainInterface import LangChainInterface
-# Import langchain prompt templates
-from langchain.prompts import PromptTemplate
-# Import system libraries
-import os
-# Import streamlit for the UI 
 import streamlit as st
+
 import requests
 import yaml
 
 import os
 import re
+import json
 import requests
-
 import warnings
+from dotenv import load_dotenv
 warnings.filterwarnings("ignore")
 
+import pandas as pd
 import numpy as np
 
 from langchain.document_loaders import PyPDFLoader
 from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 from typing import Literal, Optional, Any
+
+def invoke_endpoint(payload, smclient, endpoint_name):
+    res = smclient.invoke_endpoint(
+                EndpointName=endpoint_name,
+                Body=json.dumps(payload),
+                ContentType="application/json",
+                CustomAttributes="accept_eula=true")
+    return res["Body"].read().decode("utf8")
 
 # Load the model from TF Hub
 class MiniLML6V2EmbeddingFunction():
@@ -132,6 +131,7 @@ def build_prompt(question, topn_chunks_for_prompts):
       prompt += c + '\n\n'
 
   prompt += "Instructions: Compose a comprehensive reply to the query using the search results given. "\
+          "First answer yes or no before explaining. "\
           "Cite each reference using [Page Number] notation (every result has this number at the beginning). "\
           "Citation should be done at the end of each sentence. Only include information found in the results and "\
           "don't add any additional information. Make sure the answer is correct and don't output false content. "\
@@ -143,44 +143,30 @@ def build_prompt(question, topn_chunks_for_prompts):
 
   return prompt
 # # Load environment vars
-# load_dotenv()
-
-# # Define credentials 
-# api_key = os.getenv("API_KEY", None)
-# ibm_cloud_url = os.getenv("IBM_CLOUD_URL", None)
-# project_id = os.getenv("PROJECT_ID", None)
-# if api_key is None or ibm_cloud_url is None or project_id is None:
-#     print("Ensure you copied the .env file that you created earlier into the same directory as this notebook")
-# else:
-#     creds = {
-#         "url": ibm_cloud_url,
-#         "apikey": api_key 
-#     }
-
-# Define generation parameters 
-# params = {
-#     GenParams.DECODING_METHOD: "sample",
-#     GenParams.MIN_NEW_TOKENS: 30,
-#     GenParams.MAX_NEW_TOKENS: 300,
-#     GenParams.TEMPERATURE: 0.2,
-#     # GenParams.TOP_K: 100,
-#     # GenParams.TOP_P: 1,
-#     GenParams.REPETITION_PENALTY: 1
-# }
-
-# define LangChainInterface model
-#llm = LangChainInterface(model='google/flan-ul2', credentials=creds, params=params, project_id=project_id)
+load_dotenv()
+ibm_api_key = os.getenv("IBM_API_KEY", None)
+ibm_cloud_url = os.getenv("IBM_CLOUD_URL", None)
 
 # Title for the app
 st.title('🤖 Compliance Checker')
 
 model_option = st.selectbox('Choose your model?', 
                             ('Llama2-70b-chat', 'llama-2-13b-chat', 'llama-2-7b-chat'))
+
 st.write('You selected:', model_option)
 
 uploaded_file = st.file_uploader("Upload a YAML file", type=["yaml", "yml", "txt"])
 
 uploaded_policy_file = st.file_uploader("Upload a policy file", type=["pdf"])
+
+if model_option == "Llama2-70b-chat":
+    model_id = "meta-llama/llama-2-70b-chat"
+
+if model_option == "llama-2-13b-chat":
+    model_id = "meta-llama/llama-2-13b-chat"
+
+if model_option == "llama-2-7b-chat":
+    model_id = "meta-llama/llama-2-7b-chat"
 
 if uploaded_policy_file is not None:
     with open("temp_save", 'wb') as f: 
@@ -199,33 +185,38 @@ if uploaded_file is not None:
 
     # If the uploaded file is a YAML file, read and display its content
     if uploaded_file.type in ["application/x-yaml", "text/yaml", "text/plain"]:
-        st.subheader("YAML Content:")
+        st.subheader("Results Summary:")
         yaml_content = yaml.safe_load(uploaded_file.read())
         # st.write(yaml_content)
 
+    df_results = pd.DataFrame(columns=["filename", "policy_file", "section", "compliance", "reasons"])
+
+    output_policy = ""
+    output_filename = uploaded_file.name
+    output_section = ""
+    output_compliance = ""
+    output_reasons = ""
+
     if yaml_content:
         for key in yaml_content["Resources"]:
-            st.write(yaml_content["Resources"][key])
+
+            #  st.write(yaml_content["Resources"][key])
+            output_section = yaml_content["Resources"][key]
 
             if uploaded_policy_file is not None:
-                prompt = "Input: You are an AWS cloud expert. What does this cloudformation template do? Answer concisely." 
+
+                output_policy = uploaded_policy_file.name
+
+                prompt = "Input: You are an AWS cloud expert. What does this cloudformation template do? Answer concisely."
                 prompt += "\n"
                 prompt += str(yaml_content["Resources"][key])
                 prompt += "\n"
                 prompt += "Output:"
+
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": "Bearer pak-EZDdAZYO7HAXbDu1O-CB5BiBz-k-vGnWdtJj-yfJtdg"
+                    "Authorization": "Bearer " + ibm_api_key
                 }
-
-                if model_option == "Llama2-70b-chat":
-                    model_id = "meta-llama/llama-2-70b-chat"
-
-                if model_option == "llama-2-13b-chat":
-                    model_id = "meta-llama/llama-2-13b-chat"
-
-                if model_option == "llama-2-7b-chat":
-                    model_id = "meta-llama/llama-2-7b-chat"
 
                 payload = {
                     "model_id": model_id,
@@ -234,11 +225,12 @@ if uploaded_file is not None:
                 }
                 # Pass the prompt to the llm
                 #response = llm(prompt)
-                response = requests.request("POST", "https://bam-api.res.ibm.com/v1/generate", json=payload, headers=headers)
+            
+                response = requests.request("POST", ibm_cloud_url, json=payload, headers=headers)
                 response_json = response.json()
                 output = response_json.get("results")[0]["generated_text"]
                 # Write the output to the screen
-                st.write(output)
+                # st.write(output)
 
                 #Q&A functionalities
                 question = output + "Is this compliant?"
@@ -247,26 +239,10 @@ if uploaded_file is not None:
                 prompt += "\n"
                 prompt += "Output:"
 
-                # prompt = "Input: You are a cyber security expect. Is the cloud formation template below CIS-compliant?" 
-                # prompt += "\n"
-                # prompt += output
-                # prompt += "\n"
-                # prompt += str(yaml_content["Resources"][key])
-                # prompt += "\n"
-                # prompt += "Output:"
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": "Bearer pak-EZDdAZYO7HAXbDu1O-CB5BiBz-k-vGnWdtJj-yfJtdg"
+                    "Authorization": "Bearer " + ibm_api_key
                 }
-
-                if model_option == "Llama2-70b-chat":
-                    model_id = "meta-llama/llama-2-70b-chat"
-
-                if model_option == "llama-2-13b-chat":
-                    model_id = "meta-llama/llama-2-13b-chat"
-
-                if model_option == "llama-2-7b-chat":
-                    model_id = "meta-llama/llama-2-7b-chat"
 
                 payload = {
                     "model_id": model_id,
@@ -275,31 +251,30 @@ if uploaded_file is not None:
                 }
                 # Pass the prompt to the llm
                 #response = llm(prompt)
-                response = requests.request("POST", "https://bam-api.res.ibm.com/v1/generate", json=payload, headers=headers)
+                response = requests.request("POST", ibm_cloud_url, json=payload, headers=headers)
                 response_json = response.json()
                 output = response_json.get("results")[0]["generated_text"]
                 # Write the output to the screen
-                st.write(output)
+                
+                if "yes" in output[:5].lower():
+                    output_compliance = "yes"
+                if "no" in output[:5].lower():
+                    output_compliance = "No"
+
+                output_reasons = output
+                new_row = {"filename":output_filename, "policy_file":output_policy, "section":output_section, "compliance":output_compliance, "reasons":output_reasons}
+                df_results = df_results.append(new_row, ignore_index=True)
 
             else:
-                prompt = "Input: You are a cyber security expect. Is the cloud formation template below CIS-compliant?" 
+                prompt = "Input: You are a cyber security expect. Is the cloud formation template below CIS-compliant?  First answer yes or no before explaining." 
                 prompt += "\n"
                 prompt += str(yaml_content["Resources"][key])
                 prompt += "\n"
                 prompt += "Output:"
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": "Bearer pak-EZDdAZYO7HAXbDu1O-CB5BiBz-k-vGnWdtJj-yfJtdg"
+                    "Authorization": "Bearer " + ibm_api_key
                 }
-
-                if model_option == "Llama2-70b-chat":
-                    model_id = "meta-llama/llama-2-70b-chat"
-
-                if model_option == "llama-2-13b-chat":
-                    model_id = "meta-llama/llama-2-13b-chat"
-
-                if model_option == "llama-2-7b-chat":
-                    model_id = "meta-llama/llama-2-7b-chat"
 
                 payload = {
                     "model_id": model_id,
@@ -308,39 +283,19 @@ if uploaded_file is not None:
                 }
                 # Pass the prompt to the llm
                 #response = llm(prompt)
-                response = requests.request("POST", "https://bam-api.res.ibm.com/v1/generate", json=payload, headers=headers)
+                response = requests.request("POST", ibm_cloud_url, json=payload, headers=headers)
                 response_json = response.json()
                 output = response_json.get("results")[0]["generated_text"]
                 # Write the output to the screen
+                # st.write(output)
+                output_reasons = output
                 st.write(output)
+                if "yes" in output[:5].lower():
+                    output_compliance = "yes"
+                if "no" in output[:5].lower():
+                    output_compliance = "No"
 
-# # Prompt box 
-# prompt = st.text_area('Enter your prompt here')
-# # If a user hits enter
-# if prompt: 
-#     headers = {
-#         "Content-Type": "application/json",
-#         "Authorization": "Bearer pak-EZDdAZYO7HAXbDu1O-CB5BiBz-k-vGnWdtJj-yfJtdg"
-#     }
+                new_row = {"filename":output_filename, "policy_file":output_policy, "section":output_section, "compliance":output_compliance, "reasons":output_reasons}
+                df_results = df_results.append(new_row, ignore_index=True)
 
-#     if model_option == "Llama2-70b-chat":
-#         model_id = "meta-llama/llama-2-70b-chat"
-
-#     if model_option == "llama-2-13b-chat":
-#         model_id = "meta-llama/llama-2-13b-chat"
-
-#     if model_option == "llama-2-7b-chat":
-#         model_id = "meta-llama/llama-2-7b-chat"
-
-#     payload = {
-#         "model_id": model_id,
-#         "inputs": [prompt],
-#         "parameters": {"decoding_method": "greedy",  "max_new_tokens": 200,  "min_new_tokens": 0, "repetition_penalty": 1}
-#     }
-#     # Pass the prompt to the llm
-#     #response = llm(prompt)
-#     response = requests.request("POST", "https://bam-api.res.ibm.com/v1/generate", json=payload, headers=headers)
-#     response_json = response.json()
-#     output = response_json.get("results")[0]["generated_text"]
-#     # Write the output to the screen
-#     st.write(output)
+    st.dataframe(df_results, use_container_width=True)
